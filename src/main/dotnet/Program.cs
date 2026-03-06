@@ -46,11 +46,11 @@ namespace Training
         /// Task executed on every cluster node that calculates top local paying customers.
         /// </summary>
         public class TopPayingCustomersTask :
-            IMapReduceTask<int, Tuple, CustomerPrice[], TopCustomer[]>
+            IMapReduceTask<int, IIgniteTuple, CustomerPrice[], TopCustomer[]>
         {
             private int _customerCount;
 
-            public async Task<List<IMapReduceJob<Tuple, CustomerPrice[]>>> SplitAsync(
+            public async Task<List<IMapReduceJob<IIgniteTuple, CustomerPrice[]>>> SplitAsync(
                 ITaskExecutionContext context,
                 int customersCount)
             {
@@ -61,9 +61,9 @@ namespace Training
 
                 return replicas.Select(replica =>
                         MapReduceJob
-                            .Builder<Tuple, CustomerPrice[]>()
+                            .Builder<IIgniteTuple, CustomerPrice[]>()
                             .Nodes(new[] { replica.Value })
-                            .Args(Tuple.Create()
+                            .Args(IIgniteTuple.Create()
                                 .Set("partition", replica.Key.GetHashCode())
                                 .Set("count", customersCount))
                             .JobDescriptor(
@@ -72,7 +72,7 @@ namespace Training
                                     .Units(DeploymentUnit)
                                     .Build())
                             .Build())
-                    .ToList<IMapReduceJob<Tuple, CustomerPrice[]>>();
+                    .ToList<IMapReduceJob<IIgniteTuple, CustomerPrice[]>>();
             }
 
             public async Task<TopCustomer[]> ReduceAsync(
@@ -91,7 +91,7 @@ namespace Training
                     .ToList();
 
                 var customersTable = await context.Ignite.Tables.GetTableAsync("Customer");
-                var customersCache = customersTable.GetRecordView<Tuple>();
+                var customersCache = customersTable.GetRecordView<IIgniteTuple>();
 
                 var results = new List<TopCustomer>();
 
@@ -101,7 +101,7 @@ namespace Training
 
                     var customerRecord = await customersCache.GetAsync(
                         null,
-                        Tuple.Create().Set("customerId", key));
+                        IIgniteTuple.Create().Set("customerId", key));
 
                     var customer = new TopCustomer(key, orderedResults[i].Price);
 
@@ -129,14 +129,15 @@ namespace Training
             /// <summary>
             /// Compute job executed on each node.
             /// </summary>
-            public class TopPayingCustomersJob : IComputeJob<Tuple, CustomerPrice[]>
+            public class TopPayingCustomersJob : IComputeJob<IIgniteTuple, CustomerPrice[]>
             {
                 private const string Sql =
                     "select customerid, quantity * unitprice as price from invoiceline where \"__part\" = ?";
 
-                public async Task<CustomerPrice[]> ExecuteAsync(
+                public async ValueTask<CustomerPrice[]> ExecuteAsync(
                     IJobExecutionContext context,
-                    Tuple parameters)
+                    IIgniteTuple parameters,
+                    CancellationToken cancellationToken)
                 {
                     var customerPurchases = new Dictionary<int, decimal>();
 
@@ -181,36 +182,7 @@ namespace Training
         }
     }
 
-    public class CustomerPrice
-    {
-        public int CustomerId { get; }
-        public decimal Price { get; }
+    public record CustomerPrice (int CustomerId, decimal Price) {}
 
-        public CustomerPrice(int customerId, decimal price)
-        {
-            CustomerId = customerId;
-            Price = price;
-        }
-    }
-
-    public class TopCustomer
-    {
-        public int CustomerId { get; }
-        public decimal Price { get; }
-
-        public string FullName { get; set; }
-        public string City { get; set; }
-        public string Country { get; set; }
-
-        public TopCustomer(int customerId, decimal price)
-        {
-            CustomerId = customerId;
-            Price = price;
-        }
-
-        public override string ToString()
-        {
-            return $"{FullName} ({City}, {Country}) - {Price}";
-        }
-    }
+    public record TopCustomer (int CustomerId, decimal Price, string FullName, string City, string Country) {}
 }
